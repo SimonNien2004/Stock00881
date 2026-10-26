@@ -238,7 +238,7 @@ def write_daily(*, base, X, today, contrib, pos, bt, ev, live, cfg, engine, meta
 
     s, c = bt["signal"], bt["dca"]
     L += ["## 系統表現", "",
-          f"回測 {bt['start']:%Y-%m-%d} ～ {bt['end']:%Y-%m-%d}，每月 {eval_budget(cfg):,.0f} 元{'（以定期定額月總額作為回測假設）' if not cfg.get('monthly_budget') else ''}，僅用樣本外預測：", "",
+          f"回測 {bt['start']:%Y-%m-%d} ～ {bt['end']:%Y-%m-%d}，每月 {eval_budget(cfg):,.0f} 元{'' if cfg.get('monthly_budget') else ('（以定期定額月總額作為回測假設）' if (cfg.get('dca') or {}).get('amount') else '（未設定預算，以 10,000 元作為回測假設）')}，僅用樣本外預測：", "",
           "| 策略 | 年化報酬（XIRR） | 總報酬 | 平均買入價（還原價） | 最大回撤 |", "| --- | --- | --- | --- | --- |",
           f"| 照訊號加碼 | {_pct(s['xirr'])} | {_pct(s['total_return'])} | {s['avg_cost']:.2f} | {_pct(s['max_drawdown'])} |",
           f"| 定期定額 | {_pct(c['xirr'])} | {_pct(c['total_return'])} | {c['avg_cost']:.2f} | {_pct(c['max_drawdown'])} |",
