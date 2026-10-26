@@ -10,6 +10,7 @@ REPORTS = ROOT / "reports"
 
 TRADES_CSV = DATA / "trades.csv"
 PREDICTIONS_CSV = DATA / "predictions.csv"
+POOL_LEDGER_CSV = DATA / "pool_ledger.csv"   # 共用資金池：其他標的的額外加碼支出
 
 
 def load_config() -> dict:

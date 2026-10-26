@@ -15,7 +15,7 @@ import argparse
 
 import pandas as pd
 
-from .config import TRADES_CSV, ensure_dirs, load_config
+from .config import POOL_LEDGER_CSV, TRADES_CSV, ensure_dirs, load_config
 
 COLUMNS = ["date", "action", "shares", "price", "fee", "note"]
 NHI_RATE, NHI_THRESHOLD = 0.0211, 20000   # 二代健保補充保費：單筆股利 ≥ 2 萬元扣 2.11%
@@ -57,6 +57,30 @@ def add_trade(date: str, shares: int, price: float, action: str = "buy", fee: fl
 EXTRA_TAG = "額外加碼"
 
 
+LEDGER_COLUMNS = ["date", "symbol", "amount", "note"]
+
+
+def load_ledger(exclude_symbol: str | None = None) -> pd.DataFrame:
+    """共用資金池帳本：其他標的的額外加碼（日期、標的、金額含手續費）。"""
+    if not POOL_LEDGER_CSV.exists():
+        return pd.DataFrame(columns=LEDGER_COLUMNS).assign(date=pd.to_datetime([]))
+    df = pd.read_csv(POOL_LEDGER_CSV, dtype={"symbol": str, "note": str})
+    df["date"] = pd.to_datetime(df["date"])
+    df["amount"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0)
+    if exclude_symbol:
+        df = df[df["symbol"].astype(str) != str(exclude_symbol)]
+    return df
+
+
+def add_ledger(date: str, symbol: str, amount: float, note: str = "") -> dict:
+    ensure_dirs()
+    if not POOL_LEDGER_CSV.exists():
+        pd.DataFrame(columns=LEDGER_COLUMNS).to_csv(POOL_LEDGER_CSV, index=False)
+    row = {"date": pd.Timestamp(date).strftime("%Y-%m-%d"), "symbol": str(symbol), "amount": round(float(amount), 2), "note": note}
+    pd.DataFrame([row]).to_csv(POOL_LEDGER_CSV, mode="a", header=False, index=False)
+    return row
+
+
 def pool_status(cfg: dict, trades: pd.DataFrame | None = None, today: pd.Timestamp | None = None) -> dict | None:
     """額外加碼資金池：總額、已用、剩餘、本月已用、本月各訊號可動用上限。"""
     pool = cfg.get("extra_pool") or {}
@@ -71,14 +95,22 @@ def pool_status(cfg: dict, trades: pd.DataFrame | None = None, today: pd.Timesta
                    & trades["note"].astype(str).str.contains(EXTRA_TAG)]
     else:
         t = trades
-    spend = (t["shares"] * t["price"] + t["fee"]) if len(t) else pd.Series(dtype=float)
-    used = float(spend.sum()) if len(t) else 0.0
+    own = pd.DataFrame({"date": t["date"], "amount": t["shares"] * t["price"] + t["fee"]}) if len(t) \
+        else pd.DataFrame(columns=["date", "amount"])
+    # 共用資金池：加上其他標的（記在 pool_ledger.csv）的額外加碼支出
+    others = load_ledger(cfg["symbol"])
+    others = others[others["date"] >= start]
+    allx = pd.concat([own, others[["date", "amount"]]], ignore_index=True)
+    used = float(allx["amount"].sum()) if len(allx) else 0.0
     month0 = today.replace(day=1)
-    used_month = float(spend[t["date"] >= month0].sum()) if len(t) else 0.0
+    used_month = float(allx.loc[pd.to_datetime(allx["date"]) >= month0, "amount"].sum()) if len(allx) else 0.0
+    used_self = float(own["amount"].sum()) if len(own) else 0.0
     remaining = max(0.0, total - used)
     at_month_start = remaining + used_month
     npct, apct = float(pool.get("normal_pct", 0.10)), float(pool.get("aggressive_pct", 0.30))
-    return {"total": total, "used": used, "remaining": remaining, "used_month": used_month,
+    return {"total": total, "used": used, "used_self": used_self, "used_others": used - used_self,
+            "shared_with": pool.get("shared_with") or [],
+            "remaining": remaining, "used_month": used_month,
             "cap_normal": min(max(0.0, at_month_start * npct - used_month), remaining),
             "cap_aggressive": min(max(0.0, at_month_start * apct - used_month), remaining),
             "normal_pct": npct, "aggressive_pct": apct}
@@ -167,15 +199,31 @@ def _cli():
     a.add_argument("--fee", type=float, default=None)
     a.add_argument("--note", default="")
     a.add_argument("--extra", action="store_true", help="這筆是動用額外資金池的加碼（定期定額不要加）")
+    lg = sub.add_parser("ledger", help="記錄其他標的動用共用資金池的金額")
+    lg.add_argument("--date", required=True)
+    lg.add_argument("--symbol", required=True, help="其他標的代號，例如 00878")
+    lg.add_argument("--amount", type=float, required=True, help="含手續費的總金額")
+    lg.add_argument("--note", default="")
     sub.add_parser("summary", help="顯示持股摘要")
     args = ap.parse_args()
     if args.cmd == "add":
         note = f"{EXTRA_TAG} {args.note}".strip() if args.extra and EXTRA_TAG not in args.note else args.note
         print("已記錄：", add_trade(args.date, args.shares, args.price, args.action, args.fee, note))
+        cfg = load_config()
+        p = pool_status(cfg)
+        if p:
+            print(f"額外資金池：已用 {p['used']:,.0f}／{p['total']:,.0f} 元，剩 {p['remaining']:,.0f} 元")
+        if EXTRA_TAG in note and p and p["shared_with"]:
+            amt = args.shares * args.price + (args.fee if args.fee is not None else default_fee(args.shares, args.price, cfg))
+            for other in p["shared_with"]:
+                print(f"共用資金池：請到 Stock{other} 執行 python -m src.portfolio ledger --date {args.date} "
+                      f"--symbol {cfg['symbol']} --amount {amt:.0f}")
+    elif args.cmd == "ledger":
+        print("已記錄到共用資金池帳本：", add_ledger(args.date, args.symbol, args.amount, args.note))
         p = pool_status(load_config())
         if p:
             print(f"額外資金池：已用 {p['used']:,.0f}／{p['total']:,.0f} 元，剩 {p['remaining']:,.0f} 元")
-    else:
+    elif args.cmd == "summary":
         from .features import build
         cfg = load_config()
         base, _, _ = build(cfg)

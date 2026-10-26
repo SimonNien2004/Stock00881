@@ -114,7 +114,8 @@ def advice(sig: str, cfg: dict, close: float, pos: dict) -> list[str]:
     aim = cfg["thresholds"]["aggressive"]
     pool = pos.get("pool")
     if pool:
-        left = f"資金池剩 {pool['remaining']:,.0f} / {pool['total']:,.0f} 元"
+        shared = f"，與 {'、'.join(pool['shared_with'])} 共用" if pool.get("shared_with") else ""
+        left = f"資金池剩 {pool['remaining']:,.0f} / {pool['total']:,.0f} 元{shared}"
         if pool["remaining"] <= 0:
             lines.append(f"額外加碼：資金池已用完（{left}）。")
         elif sig == AGGRESSIVE:
@@ -217,7 +218,9 @@ def write_daily(*, base, X, today, contrib, pos, bt, ev, live, cfg, engine, meta
               f"| 成本殖利率（近 12 個月） | {pos['cost_yield']:.2%} |"]
         if pos.get("pool"):
             p = pos["pool"]
-            L += [f"| 額外資金池 | 已用 {p['used']:,.0f}／{p['total']:,.0f} 元，剩 {p['remaining']:,.0f} 元 |"]
+            detail = (f"（本檔 {p['used_self']:,.0f}、{'、'.join(p['shared_with'])} {p['used_others']:,.0f}）"
+                      if p.get("shared_with") else "")
+            L += [f"| 額外資金池 | 已用 {p['used']:,.0f}／{p['total']:,.0f} 元{detail}，剩 {p['remaining']:,.0f} 元 |"]
         L += [""]
     else:
         L += ["尚未記錄持股。在 Claude 對話中說「我有 20 張，均價 33.5」或回報交易即可建立。", ""]
