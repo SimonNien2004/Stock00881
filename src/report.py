@@ -173,6 +173,31 @@ def reasons(contrib: pd.Series, xrow: pd.Series, k: int = 3) -> list[str]:
     return out
 
 
+def price_alerts(cfg: dict, close: float, pos: dict) -> list[dict]:
+    """config 的 price_alerts：收盤跌破設定價位時提醒（只提醒，不改訊號）。"""
+    out = []
+    for a in cfg.get("price_alerts") or []:
+        below, amt = float(a["below"]), float(a.get("amount", 0) or 0)
+        item = {"below": below, "amount": amt, "triggered": close < below, "gap": below / close - 1,
+                "note": a.get("note", "")}
+        if amt and close > 0:
+            n = int(amt / (close * (1 + cfg.get("fee_rate", 0.001425) * cfg.get("fee_discount", 1))))
+            item["shares"] = n
+            if pos.get("has_position") and n:
+                item["avg_after"] = (pos["cost"] + amt) / (pos["shares"] + n)
+        out.append(item)
+    return out
+
+
+def _alert_text(a: dict, close: float) -> str:
+    amt = f"，可用額外資金 {a['amount']:,.0f} 元買約 {a['shares']:,} 股" if a.get("shares") else ""
+    avg = f"，均價變為 {a['avg_after']:.2f}" if a.get("avg_after") else ""
+    note = f"（{a['note']}）" if a.get("note") else ""
+    if a["triggered"]:
+        return f"🔔 收盤 {close:.2f} 已跌破提醒價 {a['below']:.2f}{amt}{avg}{note}。"
+    return f"提醒價 {a['below']:.2f}：今日收盤再跌 {-a['gap']:.1%} 才會觸發{note}。"
+
+
 def _pct(x):
     return "—" if x is None or pd.isna(x) else f"{x:.1%}"
 
@@ -194,8 +219,12 @@ def write_daily(*, base, X, today, contrib, pos, bt, ev, live, cfg, engine, meta
     if stale:
         L += [f"> ⚠️ 資料只到 {d:%Y-%m-%d}，比最近交易日少 {stale} 天（資料源尚未更新）；以下評分用的是舊價格。", ""]
     L += [f"資料截止：**{d:%Y-%m-%d}**" + ("" if stale else "（已是最新交易日）"), ""]
-    L += ["## 結論", "",
-          f"**加碼評分：{sc:.0f} / 100 → {sig}**（信心 {conf}）", ""]
+    alerts = price_alerts(cfg, close, pos)
+    L += ["## 結論", ""]
+    L += [f"> {_alert_text(a, close)}" for a in alerts if a["triggered"]]
+    if any(a["triggered"] for a in alerts):
+        L += [""]
+    L += [f"**加碼評分：{sc:.0f} / 100 → {sig}**（信心 {conf}）", ""]
     L += [f"- {x}" for x in advice(sig, cfg, close, pos)]
     L += ["", "## 預測（含息報酬）", "",
           "| 期間 | 上漲機率 | 預期區間（10%–90%） | 中位數 | 換算價格區間 |",
@@ -237,6 +266,7 @@ def write_daily(*, base, X, today, contrib, pos, bt, ev, live, cfg, engine, meta
             if pos.get("next_div_nhi"):
                 line += f"（超過 2 萬元，將扣二代健保補充保費約 {pos['next_div_nhi']:,.0f} 元）"
         L.append(line + "。")
+    L += [f"- {_alert_text(a, close)}" for a in alerts if not a["triggered"]]
     L.append(f"- 下次成分股調整（估）：{next_rb:%Y-%m-%d} 前後，距今 {(next_rb - d).days} 天。")
     L += [f"- 近 12 個月殖利率（以今日收盤計）：{pos['market_yield']:.2%}。", ""]
 
@@ -265,6 +295,7 @@ def write_daily(*, base, X, today, contrib, pos, bt, ev, live, cfg, engine, meta
         "advice": advice(sig, cfg, close, pos),
         "prediction": {k: float(today[k]) for k in today.index if k.startswith(("p_", "q"))},
         "reasons": reasons(contrib, X.iloc[-1]),
+        "price_alerts": alerts,
         "position": {k: (float(v) if isinstance(v, (int, float, np.floating)) else v)
                      for k, v in pos.items() if k not in ("dividends", "last_trade", "date")},
         "next_ex_dividend_est": next_ex.strftime("%Y-%m-%d") if next_ex is not None else None,
