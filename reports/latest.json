@@ -25,6 +25,17 @@
     "收盤價位於近 120 日區間的 38% 位置（不利加碼）",
     "加權指數近 20 日 -5.1%（有利加碼）"
   ],
+  "price_alerts": [
+    {
+      "below": 42.0,
+      "amount": 10000.0,
+      "triggered": false,
+      "gap": -0.10447761194029848,
+      "note": "跌破 42 用一般加碼額度買 1 萬元",
+      "shares": 213,
+      "avg_after": 49.922524916943516
+    }
+  ],
   "position": {
     "has_position": 1.0,
     "close": 46.9,
@@ -89,7 +100,7 @@
     "taiex": "FinMind",
     "inst": "FinMind"
   },
-  "generated_at": "2026-10-30 22:41",
+  "generated_at": "2026-10-30 23:13",
   "data_stale_days": 0,
   "data_warnings": []
 }
